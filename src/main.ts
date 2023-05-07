@@ -33,21 +33,7 @@ async function main() {
        display: flex;
     }`)
 
-  /** Renderer for the template `:lookup`
-   * @param slot Slot defines the UI element where the contributed UI is placed
-   * @param payload string[] defines 4 parameters in total:
-   *           - `type`, must be ':lookup'
-   *           - `target`, the name of a page on which to look up page properties
-   *           - `propertyNames`, the names of the page properties, whose values to retrieve
-   *           - (`template`), optional template used to format the value.
-   *             The literal property values prefixed with `$` are replaced by the respective property value.
-   *             As fallback, `$value` is replaced with the value of the first property.
-   *
-   * No UI element is inserted / returned, when `property` is not defined on `page`,
-   * or `page` does not even exist.
-   */
-  logseq.App.onMacroRendererSlotted(({slot, payload}) => {
-    // console.debug(`rendering slot ${slot} with payload:`, payload)
+  const lookupHandler = (slot: string, payload: any) => {
     const [type, target, propertyNameList, formatTemplate, fallbackTemplate] = payload.arguments
     if (!type || type != ':lookup') {
       return
@@ -60,7 +46,7 @@ async function main() {
       .replace(/"/g, '\\"')
 
     // split properties by ":", remove any empty entries.
-    const propertyNames = propertyNameList.split(":").map((prop) => prop.trim()).filter(prop => prop !== "")
+    const propertyNames = propertyNameList.split(":").map((prop: string) => prop.trim()).filter((prop: string) => prop !== "")
 
     if (propertyNames.length == 0) {
       return
@@ -138,6 +124,144 @@ async function main() {
         })
       }
     })
+  }
+
+  // query these properties: tags, projects, related-techs, urls, and deadline
+  const issueLookupHandler = (slot: string, payload: any) => {
+    const [type, target] = payload.arguments
+    if (!type || type != ':issueLookup') {
+      return
+    }
+
+    const targetPage = target
+      .replace(/^(\[\[)(.*)(\]\])$/, "$2")
+      .replace(/"/g, '\\"')
+
+    const query = `[
+      :find ?prop
+      :where 
+      [?p :block/original-name ?on]
+      [?p :block/properties ?prop]
+      [(= ?on "${targetPage}")]
+    ]`
+
+    logseq.DB.datascriptQuery(query).then(result => {
+        const properties = result[0][0]
+
+        const tags = properties["tags"]
+        let tagsHtml = ""
+        const projects = properties["projects"]
+        let projectsHtml = ""
+        const relatedTechs = properties["related-techs"]
+        let relatedTechsHtml = ""
+        const urls = properties["urls"]
+        let urlsHtml = ""
+        const deadline = properties["deadline"]
+        let deadlineHtml = ""
+
+        if (tags) {
+          const htmlTemplate = '<a data-ref="${pageName}" class="tag" data-on-click="openPage">#${pageName}</a>'
+          const separatorSpanTemplate = '<span> </span>'
+          if (Array.isArray(tags)) {
+            tagsHtml = `<div>${tags.map((tag) => {
+              return htmlTemplate.replaceAll("${pageName}", tag)
+            }).join(separatorSpanTemplate)}</div>`
+          } else if (typeof tags === "string" && tags.length > 0) {
+            tagsHtml = htmlTemplate.replaceAll("${pageName}", tags)
+          }
+        }
+
+        if (projects) {
+          const htmlTemplate = '<a data-ref="${pageName}" class="tag" data-on-click="openPage">#${pageName}</a>'
+          const separatorSpanTemplate = '<span> </span>'
+          if (Array.isArray(projects)) {
+            projectsHtml = `<div>${projects.map((tag) => {
+              return htmlTemplate.replaceAll("${pageName}", tag)
+            }).join(separatorSpanTemplate)}</div>`
+          } else if (typeof projects === "string" && projects.length > 0) {
+            projectsHtml = htmlTemplate.replaceAll("${pageName}", projects)
+          }
+        }
+
+        if (relatedTechs) {
+          const htmlTemplate = '<a data-ref="${pageName}" class="tag" data-on-click="openPage">#${pageName}</a>'
+          const separatorSpanTemplate = '<span> </span>'
+          if (Array.isArray(relatedTechs)) {
+            relatedTechsHtml = `<div>${relatedTechs.map((tag) => {
+              return htmlTemplate.replaceAll("${pageName}", tag)
+            }).join(separatorSpanTemplate)}</div>`
+          } else if (typeof relatedTechs === "string" && relatedTechs.length > 0) {
+            relatedTechsHtml = htmlTemplate.replaceAll("${pageName}", relatedTechs)
+          }
+        }
+
+        if (urls) {
+          const htmlTemplate = '<a href="${url}" target="_blank">🔍</a>'
+          const separatorSpanTemplate = '<span>, </span>'
+          if (Array.isArray(urls)) {
+            urlsHtml = `<div>${urls.map((url) => {
+              return htmlTemplate.replaceAll("${url}", url)
+            }).join(separatorSpanTemplate)}</div>`
+          } else if (typeof urls === "string" && urls.length > 0) {
+            urlsHtml = htmlTemplate.replaceAll("${url}", urls)
+          }
+        }
+
+        if (deadline) {
+          const htmlTemplate = '<a data-ref="$deadline" class="page-ref" data-on-click="openPage">[[${deadline}]]</a>'
+          const separatorSpanTemplate = '<span>, </span>'
+          if (Array.isArray(deadline)) {
+            deadlineHtml = `<div>${deadline.map((date) => {
+              return htmlTemplate.replaceAll("${deadline}", date)
+            }).join(separatorSpanTemplate)}</div>`
+          } else if (typeof deadline === "string" && deadline.length > 0) {
+            deadlineHtml = htmlTemplate.replaceAll("${deadline}", deadline)
+          }
+        }
+
+        const contentHtml = [tagsHtml, projectsHtml, relatedTechsHtml, urlsHtml, deadlineHtml].filter((html) => {
+          return html !== ""
+        }).join("<span> / </span>")
+
+        const template = `
+        <div style="display: flex; flex-direction: row">
+            ${contentHtml}
+        </div>
+      `
+
+        logseq.provideUI({
+          key: slot,
+          slot,
+          reset: true,
+          template
+        })
+      }
+    ).catch(_ => {
+      logseq.provideUI({
+        key: slot,
+        slot, reset: true,
+        template: "<div>Failed to lookup issue</div>"
+      })
+    })
+  }
+
+  /** Renderer for the template `:lookup`
+   * @param slot Slot defines the UI element where the contributed UI is placed
+   * @param payload string[] defines 4 parameters in total:
+   *           - `type`, must be ':lookup'
+   *           - `target`, the name of a page on which to look up page properties
+   *           - `propertyNames`, the names of the page properties, whose values to retrieve
+   *           - (`template`), optional template used to format the value.
+   *             The literal property values prefixed with `$` are replaced by the respective property value.
+   *             As fallback, `$value` is replaced with the value of the first property.
+   *
+   * No UI element is inserted / returned, when `property` is not defined on `page`,
+   * or `page` does not even exist.
+   */
+  logseq.App.onMacroRendererSlotted(({slot, payload}) => {
+    // console.debug(`rendering slot ${slot} with payload:`, payload)
+    lookupHandler(slot, payload)
+    issueLookupHandler(slot, payload)
   })
 }
 
